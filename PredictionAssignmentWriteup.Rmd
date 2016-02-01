@@ -1,0 +1,85 @@
+---
+title: "Weight Lift Exercise Prediction Assignment"
+author: "Sinto Ling"
+date: "Sunday, January 31, 2016"
+output: html_document
+---
+## Introduction
+This write up is for the Practical Machine Learning class from the Coursera Data Science Specialization. It is offered through Coursera by Johns Hopkins University Bloomberg School of Public Health. In this write up, weight lifting exercise data is analysed and a prediction model is generated. All the data is made available by the collaborators listed on this website: http://groupware.les.inf.puc-rio.br/har
+
+## Data Load & Clean Up
+Let's start by loading the files and taking a look at the data.
+```{r, cache=TRUE} 
+pml_train <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+pml_test <- read.csv("pml-testing.csv", na.strings = c("NA", "#DIV/0!", ""))
+str(pml_train, list.len=20)
+```
+The first 6 columns are not important for prediction since they are just the user information. There are also many NAs in other columns, which will be handled appropriately later.
+
+```{r, cache=TRUE}
+pml_train <- pml_train[,7:160] # first 6 are just user info.
+pml_test <- pml_test[,7:160]
+```
+
+## Data Manipulation ##
+Now divide up the training set into a training set (t1) and a test set (t2). We want to remove zero covariates while we're doing this because they are of low importance. We also want to get rid of any columns that have too many NAs, as they will not be useful to the prediction model.
+```{r, cache=TRUE}
+library(caret)
+set.seed(345200)
+inTrain <- createDataPartition(y=pml_train$classe, p=0.6, list=FALSE)
+t1 <- pml_train[inTrain,] # use this as main training set
+t2 <- pml_train[-inTrain,] # use for cross validation
+dim(t1); dim(t2) # verify dimensions
+
+## Remove zero covariates
+nzcol <- nearZeroVar(t1)
+if (length(nzcol) > 0) {
+    t1 <- t1[, -nzcol]
+    t2 <- t2[, -nzcol]
+}
+
+## Keep columns that don't have many NAs
+keepCols <- apply(!is.na(t1), 2, sum)/nrow(t1) > 0.9
+t1 <- t1[, keepCols]
+t2 <- t2[, keepCols]
+```
+
+## Predicting With Tree ##
+Next I use the rpart function as part of the rpart library to find the regression tree with "classe" as the response variable.
+```{r, cache=TRUE}
+library(rpart); library(rpart.plot)
+fitModel <- rpart(classe~., data=t1, method="class")
+prp(fitModel, cex=0.6)
+```
+
+We see in this tree that there are 9 variables present: roll_belt, pitch_forearm, magnet_dumbbell_y, roll_forearm, pitch_belt, total_accel_dumbbell, num_window, magnet_dumbbell_z, and magnet_arm_y. We check correlation between these 9 variables and find that they have low correlation, and thus can be treated as independent variables.
+```{r, cache=TRUE}
+fitCol <- c("roll_belt", "pitch_forearm", "magnet_dumbbell_y", "roll_forearm", "pitch_belt", "total_accel_dumbbell", "num_window", "magnet_dumbbell_z", "magnet_arm_y")
+corMatrix <- abs(cor(t1[,fitCol]))
+diag(corMatrix) <- 0 # set diagonal to 0
+any(corMatrix > 0.8)
+print(max(corMatrix)) # max correlation is only 0.4987
+```
+
+## Build Prediction Model ##
+Now that we have our predictor variables, we can build the prediction model.
+```{r, cache=TRUE}
+library(randomForest)
+fitModel <- train(classe~roll_belt+pitch_forearm+magnet_dumbbell_y+roll_forearm+pitch_belt+
+                      total_accel_dumbbell+num_window+magnet_dumbbell_z+magnet_arm_y,
+                  data=t1, method="rf", trControl=trainControl(method="cv", number=2))
+# for cross validation, with the large dataset, we could set 2-fold
+```
+
+Now let's try our model with the test set (t2).
+```{r, cache=TRUE}
+predictions <- predict(fitModel, newdata=t2)
+CM <- confusionMatrix(predictions, t2$classe)
+print(CM$overall[1])
+OOSE <- unname(1 - CM$overall[1]) # Out-Of-Sample Error Rate
+print(OOSE)
+```
+We get an accuracy of 99.78%! Also, we get an out of sample error rate of 0.2422%.
+
+## Conclusion ##
+Using my prediction model, the 20 test cases were all predicted correctly. Thus, the 9 predictor variables used in the model are good predictors for the "classe" variable in the weight lifting exercise data.
